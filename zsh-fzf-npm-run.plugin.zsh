@@ -169,7 +169,7 @@ _parse_native_commands() {
             # v1: "    - command" or "    - command / alias"
             local v1
             v1=$(echo "$out" \
-                | awk '/^\s+Commands:/{f=1;next} f && /^\s*$/{exit} f{print}' \
+                | awk '/^[[:space:]]+Commands:/{f=1;next} f && /^[[:space:]]*$/{exit} f{print}' \
                 | grep -oE '[a-z][a-zA-Z-]+' \
                 | grep -E '^[a-z][a-z-]+$' \
                 | while read -r name; do printf '%s\tyarn command\n' "$name"; done)
@@ -179,7 +179,7 @@ _parse_native_commands() {
             else
                 # v4/berry: "  command   description"
                 echo "$out" \
-                    | grep -E '^\s{2,6}[a-z][a-z-]*\s' \
+                    | grep -E '^[[:space:]]{2,6}[a-z][a-z-]*[[:space:]]' \
                     | sed 's/^[[:space:]]*//' \
                     | awk '{cmd=$1; $1=""; sub(/^[[:space:]]+/,""); print cmd "\t" ($0!=""?$0:cmd)}'
             fi
@@ -187,18 +187,18 @@ _parse_native_commands() {
         bun)
             # Commands are "  cmd   description"; allow single-char commands (e.g. 'x').
             bun --help 2>/dev/null \
-                | grep -E '^\s{2,4}[a-z][a-z-]*\s' \
+                | grep -E '^[[:space:]]{2,4}[a-z][a-z-]*[[:space:]]' \
                 | sed 's/^[[:space:]]*//' \
                 | awk '{cmd=$1; $1=""; sub(/^[[:space:]]+/,""); print cmd "\t" ($0!=""?$0:cmd)}'
             ;;
         pnpm)
             # Commands may have aliases ("i, install"); extract the canonical (last) name.
             pnpm help -a 2>/dev/null \
-                | grep -E '^\s{2,}[a-z]' \
-                | grep -vE ':\s*$' \
+                | grep -E '^[[:space:]]{2,}[a-z]' \
+                | grep -vE ':[[:space:]]*$' \
                 | sed 's/^[[:space:]]*//' \
                 | awk '{
-                    match($0, /[[:space:]]{3,}/)
+                    match($0, /[[:space:]][[:space:]][[:space:]][[:space:]]*/)
                     if (RSTART > 0) {
                         cmd_part = substr($0, 1, RSTART-1)
                         desc = substr($0, RSTART+RLENGTH)
@@ -211,8 +211,8 @@ _parse_native_commands() {
         deno)
             # Commands are indented 4 spaces under section headers (2 spaces).
             deno --help 2>/dev/null \
-                | grep -E '^\s{4}[a-z]' \
-                | grep -vE ':\s*$' \
+                | grep -E '^[[:space:]]{4}[a-z]' \
+                | grep -vE ':[[:space:]]*$' \
                 | sed 's/^[[:space:]]*//' \
                 | awk '{cmd=$1; $1=""; sub(/^[[:space:]]+/,""); print cmd "\t" ($0!=""?$0:cmd)}'
             ;;
