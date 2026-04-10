@@ -1,0 +1,22 @@
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (if testing locally)
+node_modules/
+
+# AI tools
+.claude/
+.cursor/
+.copilot/
+.aider*
+.continue/
+.codeium/
+.tabnine/
+.github/copilot*
