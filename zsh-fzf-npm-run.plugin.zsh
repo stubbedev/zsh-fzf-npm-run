@@ -151,24 +151,70 @@ _parse_native_commands() {
     local cmd="$1"
     case "$cmd" in
         npm)
-            # npm help lists all commands comma-separated after "All commands:"
+            # Commands are listed comma-separated after "All commands:";
+            # exit on the first non-indented line (not on blank lines).
             npm help 2>/dev/null \
-                | awk '/All commands:/{f=1;next} f && /^[[:space:]]*$/{exit} f{print}' \
+                | awk '/All commands:/{f=1;next} f && /^[^[:space:]]/{exit} f{print}' \
                 | tr ',' '\n' | tr -d ' \t' \
                 | grep -E '^[a-z]' \
                 | while read -r name; do printf '%s\tnpm command\n' "$name"; done
             ;;
-        yarn|bun|pnpm|deno)
-            # These format help as "  command    description"
-            "$cmd" --help 2>/dev/null \
-                | grep -E '^\s{2,6}[a-z][a-z-]+(\s|$)' \
+        yarn)
+            # yarn v1 lists commands as "    - commandname" under a "Commands:" section.
+            # yarn v4/berry uses "  command   description" format.
+            # Try v1 format first, then v4 format.
+            local out
+            out=$(yarn --help 2>/dev/null)
+
+            # v1: "    - command" or "    - command / alias"
+            local v1
+            v1=$(echo "$out" \
+                | awk '/^\s+Commands:/{f=1;next} f && /^\s*$/{exit} f{print}' \
+                | grep -oE '[a-z][a-zA-Z-]+' \
+                | grep -E '^[a-z][a-z-]+$' \
+                | while read -r name; do printf '%s\tyarn command\n' "$name"; done)
+
+            if [[ -n "$v1" ]]; then
+                echo "$v1"
+            else
+                # v4/berry: "  command   description"
+                echo "$out" \
+                    | grep -E '^\s{2,6}[a-z][a-z-]*\s' \
+                    | sed 's/^[[:space:]]*//' \
+                    | awk '{cmd=$1; $1=""; sub(/^[[:space:]]+/,""); print cmd "\t" ($0!=""?$0:cmd)}'
+            fi
+            ;;
+        bun)
+            # Commands are "  cmd   description"; allow single-char commands (e.g. 'x').
+            bun --help 2>/dev/null \
+                | grep -E '^\s{2,4}[a-z][a-z-]*\s' \
+                | sed 's/^[[:space:]]*//' \
+                | awk '{cmd=$1; $1=""; sub(/^[[:space:]]+/,""); print cmd "\t" ($0!=""?$0:cmd)}'
+            ;;
+        pnpm)
+            # Commands may have aliases ("i, install"); extract the canonical (last) name.
+            pnpm help -a 2>/dev/null \
+                | grep -E '^\s{2,}[a-z]' \
+                | grep -vE ':\s*$' \
                 | sed 's/^[[:space:]]*//' \
                 | awk '{
-                    cmd=$1; $1="";
-                    sub(/^[[:space:]]+/, "");
-                    print cmd "\t" ($0 != "" ? $0 : cmd)
-                  }' \
-                | grep -v '^$'
+                    match($0, /[[:space:]]{3,}/)
+                    if (RSTART > 0) {
+                        cmd_part = substr($0, 1, RSTART-1)
+                        desc = substr($0, RSTART+RLENGTH)
+                        n = split(cmd_part, words, /[, ]+/)
+                        cmd = words[n]
+                        if (cmd ~ /^[a-z]/) printf "%s\t%s\n", cmd, desc
+                    }
+                }'
+            ;;
+        deno)
+            # Commands are indented 4 spaces under section headers (2 spaces).
+            deno --help 2>/dev/null \
+                | grep -E '^\s{4}[a-z]' \
+                | grep -vE ':\s*$' \
+                | sed 's/^[[:space:]]*//' \
+                | awk '{cmd=$1; $1=""; sub(/^[[:space:]]+/,""); print cmd "\t" ($0!=""?$0:cmd)}'
             ;;
     esac
 }
