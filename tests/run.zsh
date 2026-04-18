@@ -100,18 +100,6 @@ _has_json_parser() {
     command -v jq >/dev/null 2>&1 || command -v node >/dev/null 2>&1 || command -v deno >/dev/null 2>&1
 }
 
-# ── _fzf_query ────────────────────────────────────────────────────────────────
-
-section "_fzf_query"
-
-assert_eq "suppresses query for the command itself"  "" "$(_fzf_query npm  npm)"
-assert_eq "suppresses query for 'run'"               "" "$(_fzf_query run  npm)"
-assert_eq "suppresses query for 'task'"              "" "$(_fzf_query task deno)"
-assert_eq "suppresses query for 'x'"                 "" "$(_fzf_query x    bun)"
-assert_eq "suppresses query for 'dlx'"               "" "$(_fzf_query dlx  pnpm)"
-assert_eq "passes through partial word"              "dev"   "$(_fzf_query dev   npm)"
-assert_eq "passes through arbitrary word"            "build" "$(_fzf_query build yarn)"
-
 # ── _parse_json_scripts ───────────────────────────────────────────────────────
 
 section "_parse_json_scripts"

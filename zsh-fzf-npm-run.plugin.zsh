@@ -6,7 +6,12 @@
 
 PACKAGE_COMPLETIONS_CACHE_DIR="${HOME}/.cache/package-completions"
 
-_fzf_available() { command -v fzf >/dev/null 2>&1 }
+# Cache fzf availability at load time — avoids a fork on every tab press.
+if command -v fzf >/dev/null 2>&1; then
+    _fzf_available() { return 0 }
+else
+    _fzf_available() { return 1 }
+fi
 
 _ensure_cache_dir() {
     [[ -d "$PACKAGE_COMPLETIONS_CACHE_DIR" ]] || mkdir -p "$PACKAGE_COMPLETIONS_CACHE_DIR"
@@ -69,8 +74,8 @@ _get_npm_scripts() {
     _ensure_cache_dir
 
     local pkg_hash dir_hash cache_file
-    pkg_hash=$(cksum ./package.json 2>/dev/null | cut -d' ' -f1)
-    dir_hash=$(printf '%s' "$PWD" | cksum | cut -d' ' -f1)
+    pkg_hash=${$(cksum ./package.json 2>/dev/null)[1]}
+    dir_hash=${$(printf '%s' "$PWD" | cksum)[1]}
     cache_file="${PACKAGE_COMPLETIONS_CACHE_DIR}/scripts_${dir_hash}_${pkg_hash}.cache"
 
     if [[ ! -f "$cache_file" ]]; then
@@ -83,7 +88,7 @@ _get_npm_scripts() {
     if [[ -n "$label" ]]; then
         awk -F'\t' -v lbl="$label" '{print $1 "\t[" lbl "] " $2}' "$cache_file"
     else
-        cat "$cache_file"
+        < "$cache_file"
     fi
 }
 
@@ -101,8 +106,8 @@ _get_deno_tasks() {
     _ensure_cache_dir
 
     local cfg_hash dir_hash cache_file
-    cfg_hash=$(cksum "$deno_config" 2>/dev/null | cut -d' ' -f1)
-    dir_hash=$(printf '%s' "$PWD" | cksum | cut -d' ' -f1)
+    cfg_hash=${$(cksum "$deno_config" 2>/dev/null)[1]}
+    dir_hash=${$(printf '%s' "$PWD" | cksum)[1]}
     cache_file="${PACKAGE_COMPLETIONS_CACHE_DIR}/deno_${dir_hash}_${cfg_hash}.cache"
 
     if [[ ! -f "$cache_file" ]]; then
@@ -115,7 +120,7 @@ _get_deno_tasks() {
     if [[ -n "$label" ]]; then
         awk -F'\t' -v lbl="$label" '{print $1 "\t[" lbl "] " $2}' "$cache_file"
     else
-        cat "$cache_file"
+        < "$cache_file"
     fi
 }
 
@@ -123,10 +128,9 @@ _get_deno_tasks() {
 _get_bin_executables() {
     local label="${1:-bin}"
     [[ -d "./node_modules/.bin" ]] || return
-
-    ls ./node_modules/.bin 2>/dev/null | while read -r name; do
-        printf '%s\t[%s]\n' "$name" "$label"
-    done
+    local -a bins=(./node_modules/.bin/*(N:t))
+    (( ${#bins} )) || return
+    printf '%s\t['"$label"']\n' "${bins[@]}"
 }
 
 # Get native subcommands from tool's --help, cached by tool version.
@@ -135,7 +139,8 @@ _get_native_commands() {
     _ensure_cache_dir
 
     local version cache_file
-    version=$("$cmd" --version 2>/dev/null | head -1 | tr -d '[:space:]v')
+    version=$("$cmd" --version 2>/dev/null)
+    version=${${version%%$'\n'*}//[[:space:]v]/}
     cache_file="${PACKAGE_COMPLETIONS_CACHE_DIR}/${cmd}_${version}.cache"
 
     if [[ ! -f "$cache_file" ]]; then
@@ -143,7 +148,7 @@ _get_native_commands() {
         _parse_native_commands "$cmd" > "$cache_file"
     fi
 
-    cat "$cache_file"
+    < "$cache_file"
 }
 
 # Extract commands+descriptions from each tool's help output.
@@ -151,13 +156,15 @@ _parse_native_commands() {
     local cmd="$1"
     case "$cmd" in
         npm)
-            # Commands are listed comma-separated after "All commands:";
-            # exit on the first non-indented line (not on blank lines).
+            # Commands are listed comma-separated after "All commands:".
             npm help 2>/dev/null \
-                | awk '/All commands:/{f=1;next} f && /^[^[:space:]]/{exit} f{print}' \
-                | tr ',' '\n' | tr -d ' \t' \
-                | grep -E '^[a-z]' \
-                | while read -r name; do printf '%s\tnpm command\n' "$name"; done
+                | awk '/All commands:/{f=1;next} f && /^[^[:space:]]/{exit} f{
+                    n=split($0,a,",")
+                    for(i=1;i<=n;i++){
+                        gsub(/[[:space:]]/,"",a[i])
+                        if(a[i]~/^[a-z]/) print a[i] "\tnpm command"
+                    }
+                }'
             ;;
         yarn)
             # yarn v1 lists commands as "    - commandname" under a "Commands:" section.
@@ -168,36 +175,38 @@ _parse_native_commands() {
 
             # v1: "    - command" or "    - command / alias"
             local v1
-            v1=$(echo "$out" \
-                | awk '/^[[:space:]]+Commands:/{f=1;next} f && /^[[:space:]]*$/{exit} f{print}' \
-                | grep -oE '[a-z][a-zA-Z-]+' \
-                | grep -E '^[a-z][a-z-]+$' \
-                | while read -r name; do printf '%s\tyarn command\n' "$name"; done)
+            v1=$(awk '/^[[:space:]]+Commands:/{f=1;next}
+                      f && /^[[:space:]]*$/{exit}
+                      f && match($0, /[a-z][a-zA-Z-]+/) {
+                          name=substr($0, RSTART, RLENGTH)
+                          if (name ~ /^[a-z][a-z-]+$/) print name "\tyarn command"
+                      }' <<< "$out")
 
             if [[ -n "$v1" ]]; then
-                echo "$v1"
+                print -r -- "$v1"
             else
                 # v4/berry: "  command   description"
-                echo "$out" \
-                    | grep -E '^[[:space:]]{2,6}[a-z][a-z-]*[[:space:]]' \
-                    | sed 's/^[[:space:]]*//' \
-                    | awk '{cmd=$1; $1=""; sub(/^[[:space:]]+/,""); print cmd "\t" ($0!=""?$0:cmd)}'
+                awk '/^[[:space:]]{2,6}[a-z][a-z-]*[[:space:]]/{
+                    sub(/^[[:space:]]*/,""); cmd=$1; $1=""
+                    sub(/^[[:space:]]*/,"")
+                    print cmd "\t" ($0!=""?$0:cmd)
+                }' <<< "$out"
             fi
             ;;
         bun)
             # Commands are "  cmd   description"; allow single-char commands (e.g. 'x').
             bun --help 2>/dev/null \
-                | grep -E '^[[:space:]]{2,4}[a-z][a-z-]*[[:space:]]' \
-                | sed 's/^[[:space:]]*//' \
-                | awk '{cmd=$1; $1=""; sub(/^[[:space:]]+/,""); print cmd "\t" ($0!=""?$0:cmd)}'
+                | awk '/^[[:space:]]{2,4}[a-z][a-z-]*[[:space:]]/{
+                    sub(/^[[:space:]]*/,""); cmd=$1; $1=""
+                    sub(/^[[:space:]]*/,"")
+                    print cmd "\t" ($0!=""?$0:cmd)
+                }'
             ;;
         pnpm)
             # Commands may have aliases ("i, install"); extract the canonical (last) name.
             pnpm help -a 2>/dev/null \
-                | grep -E '^[[:space:]]{2,}[a-z]' \
-                | grep -vE ':[[:space:]]*$' \
-                | sed 's/^[[:space:]]*//' \
-                | awk '{
+                | awk '/^[[:space:]]{2,}[a-z]/ && !/:[[:space:]]*$/{
+                    sub(/^[[:space:]]*/,"")
                     match($0, /[[:space:]][[:space:]][[:space:]][[:space:]]*/)
                     if (RSTART > 0) {
                         cmd_part = substr($0, 1, RSTART-1)
@@ -211,10 +220,11 @@ _parse_native_commands() {
         deno)
             # Commands are indented 4 spaces under section headers (2 spaces).
             deno --help 2>/dev/null \
-                | grep -E '^[[:space:]]{4}[a-z]' \
-                | grep -vE ':[[:space:]]*$' \
-                | sed 's/^[[:space:]]*//' \
-                | awk '{cmd=$1; $1=""; sub(/^[[:space:]]+/,""); print cmd "\t" ($0!=""?$0:cmd)}'
+                | awk '/^[[:space:]]{4}[a-z]/ && !/:[[:space:]]*$/{
+                    sub(/^[[:space:]]*/,""); cmd=$1; $1=""
+                    sub(/^[[:space:]]*/,"")
+                    print cmd "\t" ($0!=""?$0:cmd)
+                }'
             ;;
     esac
 }
@@ -227,13 +237,12 @@ _complete_items() {
     [[ -z "$items" ]] && return
 
     local deduped
-    deduped=$(echo "$items" | grep -v '^$' | awk -F'\t' '!seen[$1]++')
+    deduped=$(awk -F'\t' 'NF && !seen[$1]++' <<< "$items")
     [[ -z "$deduped" ]] && return
 
     if _fzf_available; then
         local selected
-        selected=$(echo "$deduped" \
-            | fzf \
+        selected=$(fzf \
                 --preview 'echo {} | cut -f2-' \
                 --preview-window=right:50%:wrap \
                 --height=40% \
@@ -243,7 +252,8 @@ _complete_items() {
                 --with-nth=1 \
                 --bind='tab:accept' \
                 --query="$query" \
-            | cut -f1)
+            <<< "$deduped")
+        selected=${selected%%$'\t'*}
         [[ -n "$selected" ]] && compadd -U -- "$selected"
     else
         local -a entries
@@ -255,21 +265,10 @@ _complete_items() {
     fi
 }
 
-# Determine fzf prefill query — suppress for known non-script words.
-_fzf_query() {
-    local word="$1" cmd="$2"
-    case "$word" in
-        "$cmd"|run|task|exec|x|dlx) echo "" ;;
-        *) echo "$word" ;;
-    esac
-}
-
 # Central completion dispatcher for all package managers.
 _pm_complete() {
     local cmd="$1" subcmd="$2" word="$3"
-    local query items selected
-
-    query=$(_fzf_query "$word" "$cmd")
+    local query="$word" items selected
 
     if [[ -n "$subcmd" ]]; then
         case "${cmd}:${subcmd}" in
@@ -283,13 +282,15 @@ _pm_complete() {
                 ;;
             # 'deno run' — tasks + TS/JS files
             deno:run)
+                local -a raw flist
+                raw=(
+                    ./*.{ts,js,mts,mjs}(N)
+                    ./*/*.{ts,js,mts,mjs}(N)
+                    ./*/*/*.{ts,js,mts,mjs}(N)
+                )
+                flist=("${(@)${raw:#*/node_modules/*}[1,30]#./}")
                 local files
-                files=$(find . -maxdepth 3 \
-                    \( -name "*.ts" -o -name "*.js" -o -name "*.mts" -o -name "*.mjs" \) \
-                    -not -path "*/node_modules/*" 2>/dev/null \
-                    | sed 's|^\./||' \
-                    | while read -r f; do printf '%s\t[file]\n' "$f"; done \
-                    | head -30)
+                (( ${#flist} )) && files=$(printf '%s\t[file]\n' "${flist[@]}")
                 items="$(_get_deno_tasks)"$'\n'"$files"
                 ;;
             # Executor subcommands — node_modules/.bin
@@ -324,16 +325,14 @@ _make_pm_completion() {
     local cmd="$1"
     eval "
 _${cmd}() {
-    local state last_word=\$words[-1]
-    [[ -z \$last_word ]] && last_word=\$words[-2]
+    local state word=\$words[-1]
     _arguments '1: :->command' '*: :->args'
     case \$state in
         command)
-            [[ \$last_word == ${cmd} ]] && last_word=''
-            _pm_complete '${cmd}' '' \"\$last_word\"
+            _pm_complete '${cmd}' '' \"\$word\"
             ;;
         args)
-            _pm_complete '${cmd}' \"\$words[2]\" \"\$last_word\"
+            _pm_complete '${cmd}' \"\$words[2]\" \"\$word\"
             ;;
     esac
 }
@@ -345,12 +344,10 @@ _make_exec_completion() {
     local cmd="$1"
     eval "
 _${cmd}() {
-    local last_word=\$words[-1]
-    [[ -z \$last_word ]] && last_word=\$words[-2]
-    [[ \$last_word == ${cmd} ]] && last_word=''
+    local word=\$words[-1]
     local items
     items=\$(_get_bin_executables)
-    _complete_items '${cmd}' \"\$last_word\" \"\$items\"
+    _complete_items '${cmd}' \"\$word\" \"\$items\"
 }
 "
 }
