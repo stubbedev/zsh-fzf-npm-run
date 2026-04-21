@@ -4,6 +4,54 @@ Tab completions for Node.js package managers that merge native subcommands with 
 
 **Supported tools:** `npm`, `yarn`, `bun`, `pnpm`, `deno`, `npx`, `bunx`, `pnpx`
 
+## Install
+
+### Oh My Zsh
+
+```sh
+git clone https://github.com/stubbedev/zsh-fzf-npm-run \
+  ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-fzf-npm-run
+```
+
+Add to your `.zshrc`:
+
+```zsh
+plugins=(... zsh-fzf-npm-run)
+```
+
+### Zinit
+
+```zsh
+zinit light stubbedev/zsh-fzf-npm-run
+```
+
+### Antigen
+
+```zsh
+antigen bundle stubbedev/zsh-fzf-npm-run
+```
+
+### Zplug
+
+```zsh
+zplug "stubbedev/zsh-fzf-npm-run"
+```
+
+### Manual
+
+```sh
+git clone https://github.com/stubbedev/zsh-fzf-npm-run ~/.zsh/zsh-fzf-npm-run
+echo 'source ~/.zsh/zsh-fzf-npm-run/zsh-fzf-npm-run.plugin.zsh' >> ~/.zshrc
+```
+
+---
+
+## Requirements
+
+- zsh
+- One of: `jq`, `node`, or `deno` (for parsing `package.json` / `deno.json`)
+- [fzf](https://github.com/junegunn/fzf) _(optional — native zsh menu used as fallback)_
+
 ## Features
 
 - Fuzzy-search completions via [fzf](https://github.com/junegunn/fzf) (falls back to native zsh menu if fzf is not installed)
@@ -16,60 +64,9 @@ Tab completions for Node.js package managers that merge native subcommands with 
 - Native command lists are cached by tool version and regenerated automatically on upgrade
 - Project scripts/tasks are cached by file content hash — updates instantly when `package.json` or `deno.json` changes
 
-## Requirements
-
-- zsh
-- One of: `jq`, `node`, or `deno` (for parsing `package.json` / `deno.json`)
-- [fzf](https://github.com/junegunn/fzf) _(optional — native zsh menu used as fallback)_
-
-## Installation
-
-### Oh My Zsh
-
-```sh
-git clone https://github.com/stubbedev/zsh-fzf-npm-run \
-  ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-fzf-npm-run
-```
-
-Then add the plugin to your `.zshrc`:
-
-```zsh
-plugins=(... zsh-fzf-npm-run)
-```
-
-### Zinit
-
-```zsh
-zinit light stubbedev/zsh-fzf-npm-run
-```
-
-### Zplug
-
-```zsh
-zplug "stubbedev/zsh-fzf-npm-run"
-```
-
-### Antigen
-
-```zsh
-antigen bundle stubbedev/zsh-fzf-npm-run
-```
-
-### Manual
-
-```sh
-git clone https://github.com/stubbedev/zsh-fzf-npm-run ~/.zsh/zsh-fzf-npm-run
-```
-
-Then source it in your `.zshrc`:
-
-```zsh
-source ~/.zsh/zsh-fzf-npm-run/zsh-fzf-npm-run.plugin.zsh
-```
-
 ## Usage
 
-Just press `Tab` after a supported command. The fuzzy picker opens with all relevant completions.
+Press `Tab` after any supported command. Type to filter.
 
 | Command | Completes |
 |---|---|
