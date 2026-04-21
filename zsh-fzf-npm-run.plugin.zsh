@@ -141,10 +141,10 @@ _get_native_commands() {
     local version cache_file
     version=$("$cmd" --version 2>/dev/null)
     version=${${version%%$'\n'*}//[[:space:]v]/}
-    cache_file="${PACKAGE_COMPLETIONS_CACHE_DIR}/${cmd}_${version}.cache"
+    cache_file="${PACKAGE_COMPLETIONS_CACHE_DIR}/native_${cmd}_${version}.cache"
 
     if [[ ! -f "$cache_file" ]]; then
-        rm -f "${PACKAGE_COMPLETIONS_CACHE_DIR}/${cmd}_"*.cache(N)
+        rm -f "${PACKAGE_COMPLETIONS_CACHE_DIR}/native_${cmd}_"*.cache(N)
         _parse_native_commands "$cmd" > "$cache_file"
     fi
 
@@ -259,16 +259,16 @@ _complete_items() {
         local -a entries
         while IFS=$'\t' read -r name desc; do
             [[ -z "$name" ]] && continue
-            entries+=("${name}:${desc:-$name}")
+            entries+=("${name//:/\\:}:${desc:-$name}")
         done <<< "$deduped"
-        _describe "$prompt" entries -U
+        _describe "$prompt" entries
     fi
 }
 
 # Central completion dispatcher for all package managers.
 _pm_complete() {
     local cmd="$1" subcmd="$2" word="$3"
-    local query="$word" items selected
+    local query="$word" items
 
     if [[ -n "$subcmd" ]]; then
         case "${cmd}:${subcmd}" in
