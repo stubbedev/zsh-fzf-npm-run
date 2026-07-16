@@ -1,0 +1,85 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Build engine
+        run: cargo build --release
+      - name: Shim + engine smoke test
+        run: zsh tests/run.zsh
+      - name: Completions run against real npm
+        run: |
+          bin=target/release/npm-run-comp
+          tmp=$(mktemp -d)
+          echo '{"scripts":{"dev":"vite","build":"tsc"}}' > "$tmp/package.json"
+          # Top level must offer `run` — the alias npm's own help hides.
+          cmds=$("$bin" complete --cwd "$tmp" --current 2 -- npm "")
+          echo "$cmds" | head
+          echo "$cmds" | grep -q "^run	" || { echo "missing 'run' at top level"; exit 1; }
+          # `npm run <Tab>` lists package.json scripts.
+          scripts=$("$bin" complete --cwd "$tmp" --current 3 -- npm run "")
+          echo "$scripts" | grep -q "^dev	" || { echo "missing 'dev' script"; exit 1; }
+          echo "npm smoke ok"
+
+  nix:
+    name: nix build + push to xilo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/flake.lock', '**/Cargo.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+          gc-max-store-size-linux: 5G
+
+      - run: nix flake check --print-build-logs
+
+      # Push the built closure to the self-hosted xilo cache on master pushes,
+      # so flake consumers tracking HEAD pull a prebuilt binary instead of
+      # recompiling. Release tags push the same way from release.yml.
+      - name: setup xilo
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: stubbedev/xilo@v1
+        with:
+          url: https://nix.stubbe.dev
+          cache: default
+          token: ${{ secrets.XILO_TOKEN }}
+
+      - name: push nix build to xilo (master)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        # Best-effort: a transient cache-push failure must not redden CI.
+        continue-on-error: true
+        run: |
+          OUT=$(nix build .#npm-run-comp --no-link --print-out-paths)
+          xilo push default $OUT

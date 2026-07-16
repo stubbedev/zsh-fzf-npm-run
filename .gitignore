@@ -11,6 +11,10 @@ Thumbs.db
 # Node (if testing locally)
 node_modules/
 
+# Rust build artifacts + downloaded/committed binary
+/target
+/bin
+
 # AI tools
 .claude/
 .cursor/
@@ -20,3 +24,4 @@ node_modules/
 .codeium/
 .tabnine/
 .github/copilot*
+/result

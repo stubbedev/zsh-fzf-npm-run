@@ -1,0 +1,18 @@
+[package]
+name = "npm-run-comp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Completion engine for zsh-fzf-npm-run"
+
+[[bin]]
+name = "npm-run-comp"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

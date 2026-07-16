@@ -49,20 +49,35 @@ echo 'source ~/.zsh/zsh-fzf-npm-run/zsh-fzf-npm-run.plugin.zsh' >> ~/.zshrc
 ## Requirements
 
 - zsh
-- One of: `jq`, `node`, or `deno` (for parsing `package.json` / `deno.json`)
+- `curl` or `wget` to auto-download the completion engine _(or `cargo` to build it locally — see [Development](#development))_
 - [fzf](https://github.com/junegunn/fzf) _(optional — native zsh menu used as fallback)_
+
+No `jq`, `node`, or `deno` is needed: the engine parses `package.json` and
+`deno.json`/`deno.jsonc` natively.
+
+## How it works
+
+Completions are served by a small Rust binary, `npm-run-comp`. On first load the
+plugin downloads the prebuilt release matching this checkout in the background
+(verified against its published SHA-256) into `~/.cache/npm-run/bin/`; no local
+toolchain is required and `git pull` upgrades everything. The shim just hands
+the current command line to the binary and feeds its output to fzf.
 
 ## Features
 
 - Fuzzy-search completions via [fzf](https://github.com/junegunn/fzf) (falls back to native zsh menu if fzf is not installed)
+- Top-level command lists are **hardcoded tables merged with the tool's own `--help`** — so `npm <tab>` reliably offers `run` (and other aliases npm's help hides behind `run-script`) plus any version-specific or plugin subcommands
 - Merges native subcommands and `package.json` scripts in one picker for tools that support direct script execution (`yarn`, `bun`, `pnpm`)
-- `npm` correctly requires `npm run <tab>` — scripts are not shown at the base level
 - `deno` merges native subcommands with tasks from `deno.json`/`deno.jsonc`
-- `npx`, `bunx`, `pnpx` complete from `node_modules/.bin`
-- `bun x`, `pnpm dlx`, `yarn dlx` also complete from `node_modules/.bin`
+- `npx`, `bunx`, `pnpx` — and `bun x`, `pnpm dlx`, `yarn dlx` — complete from `node_modules/.bin`
+- **Flag-aware**: completions work with arbitrary flags anywhere on the line (`npm run --silent <tab>`, `pnpm --filter web run <tab>`)
+- **Completes flags too**: typing `-` offers the current (sub)command's options — both long and short forms — parsed from its own `--help` (`npm install --<tab>` → `--save-dev`/`-S`, …); `npx eslint --<tab>` defers, since those flags belong to the invoked package
+- **Completes flag values**: `pnpm --filter <tab>` / `npm -w <tab>` offer the monorepo's package names; directory flags (`--prefix`, `-C`, `--cwd`, `--dir`) defer to zsh's file completion
+- Robust config parsing: `deno.json`/`deno.jsonc` with comments and trailing commas are handled (strict JSON is tried first, so `package.json` costs nothing extra)
+- **Honors directory flags**: `--prefix`, `-C`, `--cwd`, `--dir` resolve scripts and `node_modules/.bin` from the pointed-at (possibly nested) package
+- `package.json`/`deno.json` are located by walking up from the working directory, like the tools themselves
 - Completions only register for tools that are actually installed
-- Native command lists are cached by tool version and regenerated automatically on upgrade
-- Project scripts/tasks are cached by file content hash — updates instantly when `package.json` or `deno.json` changes
+- Unrecognized subcommands (`npm install <tab>`) fall through to zsh's default completion
 
 ## Usage
 
@@ -89,19 +104,43 @@ Press `Tab` after any supported command. Type to filter.
 
 ## Cache
 
-Caches are stored in `~/.cache/package-completions/`.
+Everything lives under `~/.cache/npm-run/`.
 
-- **Native subcommands** — cached per tool version, refreshed automatically when the tool is upgraded
-- **Project scripts/tasks** — cached per file content hash, refreshed automatically when `package.json` or `deno.json` changes
+- **Engine binary** — `~/.cache/npm-run/bin/`, tracked against the latest release
+- **Scraped `--help` output** — keyed by the tool binary's mtime + size, so a tool upgrade invalidates it instantly with no extra process spawns
 
-To clear all caches manually:
+Project scripts/tasks are parsed fresh on every tab press (a native JSON parse
+of one file — microseconds), so there is nothing to invalidate there.
 
-```sh
-rm -rf ~/.cache/package-completions/
-```
-
-## Testing
+To reset:
 
 ```sh
-zsh tests/run.zsh
+rm -rf ~/.cache/npm-run/
 ```
+
+## Development
+
+The engine is a Rust crate; [`just`](https://github.com/casey/just) wraps the
+common tasks.
+
+```sh
+just build        # cargo build --release (the shim auto-uses target/release/)
+just test         # cargo test
+just smoke        # build + shim/engine smoke test (tests/run.zsh)
+just check        # lint + test + smoke
+```
+
+Releases are cut with `just release-patch|minor|major`, which bumps
+`Cargo.toml`, tags, and pushes; CI builds the per-platform binaries and attaches
+them (with checksums) to the GitHub release the plugin downloads from.
+
+A Nix flake is also provided:
+
+```sh
+nix run  github:stubbedev/zsh-fzf-npm-run   # run the engine
+nix build github:stubbedev/zsh-fzf-npm-run  # ./result/bin/npm-run-comp
+```
+
+CI builds the flake package and pushes its closure to the `nix.stubbe.dev`
+binary cache on every `master` push and release tag, so flake consumers pull a
+prebuilt binary instead of compiling.

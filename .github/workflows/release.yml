@@ -1,0 +1,130 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check tag matches Cargo.toml version
+        run: |
+          ver=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "v$ver" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version v$ver" >&2
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: taiki-e/install-action@cross
+        if: matrix.cross
+      - name: Build
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target "${{ matrix.target }}"
+          else
+            cargo build --release --target "${{ matrix.target }}"
+          fi
+      - name: Name artifact + checksum
+        run: |
+          asset="npm-run-comp-${{ matrix.target }}"
+          cp "target/${{ matrix.target }}/release/npm-run-comp" "$asset"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$asset" > "$asset.sha256"
+          else
+            shasum -a 256 "$asset" > "$asset.sha256"
+          fi
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            npm-run-comp-${{ matrix.target }}
+            npm-run-comp-${{ matrix.target }}.sha256
+
+  cache:
+    name: push nix build to xilo (${{ matrix.system }})
+    # Build the nix package for this tag on every supported system and push
+    # each closure to the self-hosted xilo cache (nix.stubbe.dev) so flake
+    # consumers pull a prebuilt binary instead of recompiling. Covers the same
+    # architectures as the release binaries above; aarch64-linux is built under
+    # qemu on an x86_64 runner (no free native ARM Linux runner).
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            os: ubuntu-latest
+            emulate: false
+          - system: aarch64-linux
+            os: ubuntu-latest
+            emulate: true
+          - system: aarch64-darwin
+            os: macos-latest
+            emulate: false
+          - system: x86_64-darwin
+            os: macos-13
+            emulate: false
+    steps:
+      - uses: actions/checkout@v7
+      - name: Enable aarch64 emulation
+        if: matrix.emulate
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: DeterminateSystems/nix-installer-action@v22
+        with:
+          extra-conf: ${{ matrix.emulate && 'extra-platforms = aarch64-linux' || '' }}
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ matrix.system }}-${{ hashFiles('**/flake.lock', '**/Cargo.lock') }}
+          restore-prefixes-first-match: nix-${{ matrix.system }}-
+          purge: true
+          purge-prefixes: nix-${{ matrix.system }}-
+          purge-created: 0
+          purge-primary-key: never
+          gc-max-store-size-linux: 5G
+
+      - name: Build package
+        run: nix build .#packages.${{ matrix.system }}.default -L --print-out-paths | tee /tmp/outpaths
+
+      - name: setup xilo
+        uses: stubbedev/xilo@v1
+        with:
+          url: https://nix.stubbe.dev
+          cache: default
+          token: ${{ secrets.XILO_TOKEN }}
+
+      - name: Push to xilo
+        # Best-effort: a transient cache-push failure must not redden a release.
+        continue-on-error: true
+        run: xilo push default $(cat /tmp/outpaths)
