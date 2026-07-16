@@ -42,6 +42,9 @@ function _npm_run_refresh_latest() {
   local stamp="$NPM_RUN_CACHE_DIR/latest.stamp"
   local old="" ots=0
   [[ -f "$stamp" ]] && read -r old ots <"$stamp"
+  # Reject a poisoned token (e.g. an epoch shifted into field 1 when a past
+  # write stored an empty version) so it can't propagate via the fallback.
+  [[ "$old" == <->.<->.<-> ]] || old=""
   local url="" ver=""
   if command -v curl >/dev/null 2>&1; then
     url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
@@ -64,7 +67,7 @@ function _npm_run_wanted_version() {
   if (( ${EPOCHSECONDS:-0} - ${ts:-0} >= 86400 )); then
     _npm_run_refresh_latest &!
   fi
-  if [[ -n "$cached" ]]; then
+  if [[ "$cached" == <->.<->.<-> ]]; then
     REPLY="$cached"
     return 0
   fi
