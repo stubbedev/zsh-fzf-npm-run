@@ -20,7 +20,7 @@
 
         npm-run-comp = pkgs.rustPlatform.buildRustPackage {
           pname = "npm-run-comp";
-          version = "0.0.1";
+          version = "0.1.0";
           src = ./.;
           # Vendors deps straight from the committed Cargo.lock, so there is no
           # separate hash to bump — `cargo update` + commit is the only step.
