@@ -25,3 +25,5 @@ node_modules/
 .tabnine/
 .github/copilot*
 /result
+
+.direnv/
