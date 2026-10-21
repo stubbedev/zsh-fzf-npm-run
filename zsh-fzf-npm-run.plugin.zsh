@@ -122,22 +122,18 @@ function _npm_run_ensure_binary() {
     (( ${EPOCHSECONDS:-0} - ${sts:-0} < 3600 )) && [[ "$sver" == "$wanted" ]] && return 1
   fi
 
-  local os arch
-  case "$OSTYPE" in
-    darwin*) os="apple-darwin" ;;
-    linux*)  os="unknown-linux-musl" ;;
-    *) return 1 ;;
-  esac
-  case "$(uname -m)" in
-    arm64|aarch64) arch="aarch64" ;;
-    x86_64|amd64)  arch="x86_64" ;;
+  local target
+  case "$OSTYPE:$(uname -m)" in
+    darwin*:arm64|darwin*:aarch64) target="aarch64-apple-darwin" ;;
+    linux*:arm64|linux*:aarch64)   target="aarch64-unknown-linux-musl" ;;
+    linux*:x86_64|linux*:amd64)    target="x86_64-unknown-linux-musl" ;;
     *) return 1 ;;
   esac
 
   print -r -- "$wanted ${EPOCHSECONDS:-0}" >"$stamp"
   # Silent, background, best-effort: the user never sees the update happen.
   (
-    local base="https://github.com/${_NPM_RUN_REPO}/releases/download/v${wanted}/npm-run-comp-${arch}-${os}"
+    local base="https://github.com/${_NPM_RUN_REPO}/releases/download/v${wanted}/npm-run-comp-${target}"
     local dest="$_NPM_RUN_BIN_DIR/npm-run-comp"
     local tmp="$_NPM_RUN_BIN_DIR/.npm-run-comp.$$.$RANDOM"
     local sum="$tmp.sha256"
