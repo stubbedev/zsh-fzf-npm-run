@@ -108,10 +108,7 @@ _release bump:
     # tagging so the CI guard passes and the shim's version check lines up.
     sed -i -E 's/^version = "[^"]*"/version = "'"$NEW"'"/' Cargo.toml
     cargo update -p npm-run-comp
-    # Keep the flake package version in lockstep (it is cosmetic, but the nix
-    # cache job and `nix run` report it).
-    sed -i -E 's/(version = )"[0-9]+\.[0-9]+\.[0-9]+";/\1"'"$NEW"'";/' flake.nix
-    git add Cargo.toml Cargo.lock flake.nix
+    git add Cargo.toml Cargo.lock
     git commit -m "chore: bump to v${NEW}"
     git tag -a "v${NEW}" -m "v${NEW}"
     git push origin HEAD
