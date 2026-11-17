@@ -141,6 +141,6 @@ nix run  github:stubbedev/zsh-fzf-npm-run   # run the engine
 nix build github:stubbedev/zsh-fzf-npm-run  # ./result/bin/npm-run-comp
 ```
 
-CI builds the flake package and pushes its closure to the `nix.stubbe.dev`
+CI builds the flake package and pushes its closure to the `xilos.dev`
 binary cache on every `master` push and release tag, so flake consumers pull a
 prebuilt binary instead of compiling.
