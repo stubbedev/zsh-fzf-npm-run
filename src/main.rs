@@ -582,9 +582,10 @@ fn collect_files(root: &Path, dir: &Path, depth: usize, exts: &[&str], out: &mut
 
 // ─────────────────────────── --help scraping ───────────────────────────
 
-/// Cache key that changes whenever the tool binary does: its path, mtime and
-/// size, all from one stat. No fork, no `--version` call — a tool upgrade
-/// rewrites the file, so the key changes and we rescrape exactly once.
+/// Cache key that changes whenever the tool binary or this engine does: the
+/// binary's path, mtime and size from one stat, plus the engine's version, so
+/// an upgrade of either rescrapes exactly once instead of serving what an older
+/// parser made of the help text.
 fn tool_key(tool: &str) -> Option<u64> {
     let bin = which(tool)?;
     let (mtime, size) = fs::metadata(&bin)
@@ -598,7 +599,12 @@ fn tool_key(tool: &str) -> Option<u64> {
             (t, m.len())
         })
         .unwrap_or((0, 0));
-    Some(fnv(format!("{}:{mtime}:{size}", bin.display()).as_bytes()))
+    Some(fnv(format!(
+        "{}:{mtime}:{size}:{}",
+        bin.display(),
+        env!("CARGO_PKG_VERSION")
+    )
+    .as_bytes()))
 }
 
 /// Read a `namespace_tool_slot`-prefixed cache, or generate + persist it. The
@@ -674,8 +680,20 @@ fn scrape_flags(tool: &str, sub: &str) -> Vec<Item> {
         let Ok(output) = cmd.arg("--help").stderr(Stdio::null()).output() else {
             return Vec::new();
         };
-        parse_flags(&String::from_utf8_lossy(&output.stdout))
+        flags_from_help(tool, &String::from_utf8_lossy(&output.stdout))
     })
+}
+
+/// npm's help lists some options only in its bracketed synopsis (`--save-dev`
+/// rides along `[-S|--save|--save-dev|...]`) and details the rest one per
+/// line, so for npm both are read and merged; other tools fall back to the
+/// synopsis only when no flag line was found.
+fn flags_from_help(tool: &str, text: &str) -> Vec<Item> {
+    let mut flags = parse_flags(text);
+    if tool == "npm" || flags.is_empty() {
+        merge(&mut flags, parse_npm_flags(text));
+    }
+    flags
 }
 
 fn parse_cache(text: &str) -> Vec<Item> {
@@ -745,15 +763,25 @@ fn is_command_name(s: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-/// Parse option flags from help text. Handles the common
-/// `  -x, --flag <val>   description` layout (pnpm/bun/yarn/deno); npm prints a
-/// bracketed synopsis instead, handled by the fallback when this finds nothing.
+/// Parse option flags from help text: `  -x, --flag <val>   description`
+/// (pnpm/bun/yarn/deno) and the `  -x|--flag` line with its description
+/// indented on the next line (npm 11, clap). npm's bracketed synopsis is read
+/// by `parse_npm_flags`, combined in `flags_from_help`.
 fn parse_flags(text: &str) -> Vec<Item> {
     let mut out: Vec<Item> = Vec::new();
     let mut seen = HashSet::new();
+    let mut awaiting: Option<(usize, std::ops::Range<usize>)> = None;
     for line in text.lines() {
+        let indent = line.len() - line.trim_start().len();
         let t = line.trim_start();
         if !t.starts_with('-') {
+            if let Some((flag_indent, range)) = awaiting.take() {
+                if !t.is_empty() && indent > flag_indent {
+                    for item in &mut out[range] {
+                        item.1 = t.trim_end().to_string();
+                    }
+                }
+            }
             continue;
         }
         let (flag_part, desc) = match t.find("  ") {
@@ -766,7 +794,7 @@ fn parse_flags(text: &str) -> Vec<Item> {
         // `-x` alias — so both are completable.
         let mut long = None;
         let mut short = None;
-        for piece in flag_part.split(|c: char| c == ',' || c.is_whitespace()) {
+        for piece in flag_part.split(|c: char| c == ',' || c == '|' || c.is_whitespace()) {
             let cleaned = clean_flag(piece);
             if cleaned.starts_with("--") && long.is_none() {
                 long = Some(cleaned);
@@ -774,14 +802,13 @@ fn parse_flags(text: &str) -> Vec<Item> {
                 short = Some(cleaned);
             }
         }
+        let first = out.len();
         for flag in [long, short].into_iter().flatten() {
             if seen.insert(flag.clone()) {
                 out.push((flag, desc.to_string()));
             }
         }
-    }
-    if out.is_empty() {
-        return parse_npm_flags(text);
+        awaiting = (desc.is_empty() && out.len() > first).then_some((indent, first..out.len()));
     }
     out
 }
@@ -1070,7 +1097,7 @@ mod tests {
     #[test]
     fn parse_flags_npm_synopsis_fallback() {
         let help = "Usage:\nnpm install\n\nOptions:\n[-S|--save|--no-save|--save-dev] [-g|--global]\n[--install-strategy <hoisted|nested>]\n\naliases: add\n";
-        let flags = parse_flags(help);
+        let flags = flags_from_help("pnpm", help);
         let n = names(&flags);
         assert!(n.contains(&"--save"), "{n:?}");
         assert!(n.contains(&"--save-dev"), "{n:?}");
@@ -1079,6 +1106,46 @@ mod tests {
         // Short flags from the bracketed synopsis too.
         assert!(n.contains(&"-S"), "{n:?}");
         assert!(n.contains(&"-g"), "{n:?}");
+    }
+
+    #[test]
+    fn npm_11_help_keeps_synopsis_only_flags_and_detail_descriptions() {
+        let help = "Install a package\n\nUsage:\nnpm install [<package-spec> ...]\n\nOptions:\n[-S|--save|--no-save|--save-prod|--save-dev] [-g|--global]\n[--install-strategy <hoisted|nested|shallow|linked>]\n\n  -S|--save\n    Save installed packages to a package.json file as dependencies.\n\n  -g|--global\n    Operates in \"global\" mode.\n\n  --install-strategy\n    Sets the strategy for installing packages in node_modules.\n\naliases: add, i\n";
+        let flags = flags_from_help("npm", help);
+        let n = names(&flags);
+        for want in [
+            "--save",
+            "-S",
+            "--global",
+            "-g",
+            "--install-strategy",
+            "--save-dev",
+            "--no-save",
+        ] {
+            assert!(n.contains(&want), "{want} missing from {n:?}");
+        }
+        let desc = |f: &str| flags.iter().find(|(n, _)| n == f).unwrap().1.clone();
+        assert_eq!(
+            desc("--save"),
+            "Save installed packages to a package.json file as dependencies."
+        );
+        assert_eq!(desc("-g"), "Operates in \"global\" mode.");
+        assert_eq!(
+            desc("--install-strategy"),
+            "Sets the strategy for installing packages in node_modules."
+        );
+        assert_eq!(desc("--save-dev"), "npm option");
+    }
+
+    #[test]
+    fn next_line_description_needs_deeper_indent() {
+        let help = "  --alpha\n  --beta   inline\nnot a description\n";
+        let flags = parse_flags(help);
+        assert_eq!(flags.iter().find(|(f, _)| f == "--alpha").unwrap().1, "");
+        assert_eq!(
+            flags.iter().find(|(f, _)| f == "--beta").unwrap().1,
+            "inline"
+        );
     }
 
     #[test]
